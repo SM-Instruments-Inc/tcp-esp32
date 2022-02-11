@@ -11,6 +11,10 @@ style.use('fivethirtyeight')
 conn = sqlite3.connect('test.db')
 c = conn.cursor()
 
+plt.rcParams['lines.linewidth'] = 1
+plt.rcParams['axes.grid'] = True 
+plt.figure(figsize=(50,4), dpi = 600)
+
 
 
 #c.execute("SELECT TIME, ROUND(AVG(data)) FROM Mic_Datas WHERE sock = '78:E3:6D:12:17:A0' GROUP BY TIME")
@@ -40,7 +44,7 @@ values = []
 for row in data:
     dates.append(parser.parse(row[0]))
     values.append(row[1])
-
 plt.plot(dates,values,'r', label='78:E3:6D:9:37:3C')
 plt.legend(loc='upper right')
-plt.show()
+plt.savefig('Mic.png')
+

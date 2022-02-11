@@ -11,12 +11,14 @@
 #include <sqlite3.h>
 
 #define PORT 3000
-#define MAX_SIZE  30000
+#define Q_MAX_SIZE  30000
 #define BUF_SIZE 1000
 #define MAX_CLNT 256
+#define MAC_LEN 18
 
 int clnt_cnt = 0;
 int clnt_socks[MAX_CLNT];
+
 pthread_mutex_t mutex;
 
 typedef struct _item_t {
@@ -25,61 +27,70 @@ typedef struct _item_t {
 }item_t;
 
 typedef struct __circleQueue {
-    char chipnumber[18];
+    char chip_number[MAC_LEN];
     int rear;
     int front;
     item_t * data;
 }Queue;
 
-Queue q[MAX_SIZE];
+Queue sensor_data_q[Q_MAX_SIZE];
 
-void init_queue(Queue * q) {
+void InitQueue(Queue * q) 
+{
     q -> front = 0;
     q -> rear = 0;
-    q -> data = (item_t *)malloc(sizeof(item_t) * MAX_SIZE);
+    q -> data = (item_t *)malloc(sizeof(item_t) * Q_MAX_SIZE);
+    memset(q->chip_number, 0, MAC_LEN*sizeof(q->chip_number[0]));
 }
 
-int IsEmpty(Queue * q) {
+int IsEmpty(Queue * q) 
+{
     if (q -> front == q -> rear) //front와 rear가 같으면 큐는 비어있는 상태
         return 1;
     else 
         return 0;
-    }
-int IsFull(Queue * q) {
-    if ((q -> rear + 1) % MAX_SIZE == q -> front) {
+}
+
+int IsFull(Queue * q) 
+{
+    if ((q -> rear + 1) % Q_MAX_SIZE == q -> front)
         return 1;
-    }
     return 0;
 }
-void addq(Queue * q, item_t value) {
-    if (IsFull(q)) {
+
+void AddQ(Queue * q, item_t value) 
+{
+    if (IsFull(q)) 
+    {
         printf("Queue is Full.\n");
         return;
-    } else {
-        q -> rear = (q -> rear + 1) % MAX_SIZE;
+    } 
+    else 
+    {
+        q -> rear = (q -> rear + 1) % Q_MAX_SIZE;
         q -> data[q -> rear] = value;
     }
     return;
-
 }
 
-item_t deleteq(Queue * q) {
-
-    q -> front = (q -> front + 1) % MAX_SIZE;
+item_t DeleteQ(Queue * q) 
+{
+    q -> front = (q -> front + 1) % Q_MAX_SIZE;
     return q->data[q->front];
 }
 
-static int try_receive(const int sock, item_t *data, size_t max_len)
+static int TryReceive(const int sock, item_t *data, size_t max_len)
 {
     int p_len = 0;
     while(max_len != p_len)
     {
         int len = recv(sock, data + p_len, max_len, 0);
-        if (len < 0) {
-            if (errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK) {
-            len = 0;   // Not an error
-            }
-            if (errno == ENOTCONN) {
+        if (len < 0) 
+        {
+            if (errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK)
+                len = 0;   // Not an error
+            if (errno == ENOTCONN) 
+            {
                 printf("[sock=%d]: Connection closed", sock);
                 return -2;  // Socket has been disconnected
             }
@@ -89,17 +100,18 @@ static int try_receive(const int sock, item_t *data, size_t max_len)
     return p_len;
 }
 
-static int mac_receive(const int sock, char *data, size_t max_len)
+static int MacReceive(const int sock, char *data, size_t max_len)
 {
     int p_len = 0;
     while(max_len != p_len)
     {
         int len = recv(sock, data + p_len, max_len, 0);
-        if (len < 0) {
-            if (errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK) {
-            len = 0;   // Not an error
-            }
-            if (errno == ENOTCONN) {
+        if (len < 0) 
+        {
+            if (errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK)
+                len = 0;   // Not an error
+            if (errno == ENOTCONN) 
+            {
                 printf("[sock=%d]: Connection closed", sock);
                 return -2;  // Socket has been disconnected
             }
@@ -109,12 +121,14 @@ static int mac_receive(const int sock, char *data, size_t max_len)
     return p_len;
 }
 
-static int socket_send(const int sock, const char * data, const size_t len)
+static int SocketSend(const int sock, const char * data, const size_t len)
 {
     int to_write = len;
-    while (to_write > 0) {
+    while (to_write > 0)
+    {
         int written = send(sock, data + (len - to_write), to_write, 0);
-        if (written < 0 && errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK) {
+        if (written < 0 && errno != EINPROGRESS && errno != EAGAIN && errno != EWOULDBLOCK) 
+        {
             printf("Error occurred during sending");
             return -1;
         }
@@ -124,38 +138,37 @@ static int socket_send(const int sock, const char * data, const size_t len)
 }
 
 
-void push_data(int sock, item_t *data, int len)
+void PushData(int sock, item_t * data, int len) 
 {
     if (len > 0) 
     {
-        printf("send\n");
-        printf("%d\n", len);
-        //printf("send start\n");
-		for (int i = 0; i < len /sizeof(data[0]); i++) {
-            if(data[i].gas < 4096 && data[i].mic < 4096)
+        for (int i = 0; i < len / sizeof(data[0]); i ++) 
+        {
+            if (data[i].gas < 4096 && data[i].mic < 4096) 
             {
-                pthread_mutex_lock(&mutex);
-                addq(&q[sock], data[i]);
-                pthread_mutex_unlock(&mutex); 
+                pthread_mutex_lock(& mutex);
+                AddQ(&sensor_data_q[sock], data[i]);
+                pthread_mutex_unlock(& mutex);
             }
-		}
-        //printf("Q add finsh\n");
-                   // Received some data -> echo back
-                    static const char *message = "OK client"; 
-                    len = socket_send(sock, message, strlen(message));
-                    if (len < 0) {
-                        // Error occurred on write to this socket -> close it and mark invalid
-                        printf("[sock=%d]: socket_send() returned %d -> closing the socket", sock, len);
-                        close(sock);
-                        sock = -1;
-                    } else {
-                        // Successfully echoed to this socket
-                        printf("[sock=%d]: Written %.*s\n", sock, len, message);
-                    }
+        }
+        // Received some data -> echo back
+        static const char * message = "OK client";
+        len = SocketSend(sock, message, strlen(message));
+        if (len < 0) // Error occurred on write to this socket -> close it and mark invalid
+        { 
+            printf("[sock=%d]: SocketSend() returned %d -> closing the socket", sock, len);
+            close(sock);
+            sock = -1;
+        } 
+        else    // Successfully echoed to this socket
+        {
+            printf("[sock=%d]: Written %.*s\n", sock, len, message);
+        }
     }
 }
 
-void *thread_summation(void* arg) {
+void *DataSave(void* arg) 
+{
 	int i = 0;
     sqlite3 *db;
     char *err_msg = 0;
@@ -169,26 +182,23 @@ void *thread_summation(void* arg) {
         sqlite3_close(db);
     }
 
-    
 	while(1) 
 	{
 		
-		if(!IsEmpty(&q[clnt_sock]))
+		if(!IsEmpty(&sensor_data_q[clnt_sock]))
 		{
             sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
-            for(int i = 1; i < 1000; i++)
+            for(int i = 1; i < 100; i++)
             {
-                if(IsEmpty(&q[clnt_sock]))
-                {
+                if(IsEmpty(&sensor_data_q[clnt_sock]))
                     break;
-                }
                 pthread_mutex_lock(&mutex);
-			    item_t array = deleteq(&q[clnt_sock]);
+			    item_t array = DeleteQ(&sensor_data_q[clnt_sock]);
                 pthread_mutex_unlock(&mutex);
                 char gas[100];
                 char mic[100];
-                sprintf(gas, "INSERT INTO Gas_Datas (data,sock) VALUES(%d,'%s');",array.gas, q[clnt_sock].chipnumber);
-                sprintf(mic, "INSERT INTO Mic_Datas (data,sock) VALUES(%d,'%s');",array.mic, q[clnt_sock].chipnumber);
+                sprintf(gas, "INSERT INTO Gas_Datas (data,sock) VALUES(%d,'%s');",array.gas, sensor_data_q[clnt_sock].chip_number);
+                sprintf(mic, "INSERT INTO Mic_Datas (data,sock) VALUES(%d,'%s');",array.mic, sensor_data_q[clnt_sock].chip_number);
                 rc = sqlite3_exec(db, gas, 0, 0, &err_msg);
                 rc = sqlite3_exec(db, mic, 0, 0, &err_msg);
             }
@@ -201,26 +211,25 @@ void *thread_summation(void* arg) {
     
 }
 
-void* handle_clnt(void* arg)
+void* DataRead(void* arg)
 {
     pthread_t thread;
     int clnt_sock = *((int*)arg);
     int flags = fcntl(clnt_sock, F_GETFL);
-    if (fcntl(clnt_sock, F_SETFL, flags | O_NONBLOCK) == -1) {
+    if (fcntl(clnt_sock, F_SETFL, flags | O_NONBLOCK) == -1)
         printf("Unable to set socket non blocking\n");
-    }
-    init_queue(&q[clnt_sock]);
+    InitQueue(&sensor_data_q[clnt_sock]);
     
     item_t *recv_buffer;
     recv_buffer = (item_t *)malloc(sizeof(item_t) * (BUF_SIZE-1));
-    int len = 0, i;
+    int len = 0;
     
 
-    len = mac_receive(clnt_sock, q[clnt_sock].chipnumber, sizeof(q[clnt_sock].chipnumber));
+    len = MacReceive(clnt_sock, sensor_data_q[clnt_sock].chip_number, sizeof(q[clnt_sock].chip_number));
 
-    printf("%s\n", q[clnt_sock].chipnumber);
+    printf("%s\n", sensor_data_q[clnt_sock].chip_number);
 
-    int thr_id = pthread_create(&thread, NULL, thread_summation,(void*)&clnt_sock);
+    int thr_id = pthread_create(&thread, NULL, DataSave,(void*)&clnt_sock);
 	if (thr_id < 0)
     {
         perror("thread create error : ");
@@ -228,11 +237,11 @@ void* handle_clnt(void* arg)
     }
     pthread_detach(thread);
 
-    while((len=try_receive(clnt_sock,recv_buffer, sizeof(item_t) * (BUF_SIZE-1))) != -2)
-        push_data(clnt_sock,recv_buffer, len);
+    while((len=TryReceive(clnt_sock,recv_buffer, sizeof(item_t) * (BUF_SIZE-1))) != -2)
+        PushData(clnt_sock,recv_buffer, len);
         
     pthread_mutex_lock(&mutex);
-    for(i = 0; i<clnt_cnt; i++)
+    for(int i = 0; i<clnt_cnt; i++)
     {
         if(clnt_sock == clnt_socks[i])
         {
@@ -251,41 +260,6 @@ void* handle_clnt(void* arg)
     return NULL;
 }
 
-// void *thread_summation(void *data) {
-// 	FILE *gas = NULL;
-// 	FILE *mic = NULL;
-//     time_t t = time(NULL);
-// 	int i = 0;
-// 	while(1) 
-// 	{
-		
-// 		if(!IsEmpty(&q))
-// 		{
-//             gas = fopen("gas_data.txt", "a");
-//             mic = fopen("mic_data.txt", "a");
-// 			pthread_mutex_lock(&mutex);
-// 			item_t array = deleteq(&q);
-//             pthread_mutex_unlock(&mutex);
-// 			fprintf(gas, "%d, ", array.gas);
-// 			fprintf(mic, "%d, ", array.mic);
-            
-// 			i++;
-// 			if(i == 1000)
-// 			{
-//                 t = time(NULL);
-//                 struct tm tm= *localtime(&t);
-// 				fprintf(gas, "\n  %d-%d-%d %d:%d:%d\n", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-//                 fprintf(mic, "\n  %d-%d-%d %d:%d:%d\n", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
-// 				i = 0;
-// 			}
-//             fclose(gas);
-// 	        fclose(mic);
-// 		}
-		
-// 	}
-    
-// }
-
 
 
 int main()
@@ -296,33 +270,28 @@ int main()
                 "DROP TABLE IF EXISTS Mic_Datas;"
                 "CREATE TABLE Gas_Datas(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,data INT,sock CHAR(18),TIME DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW', 'localtime')));"
                 "CREATE TABLE Mic_Datas(ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,data INT,sock CHAR(18),TIME DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW', 'localtime')));";
-    int rc = sqlite3_open("test.db", &db);
     
+    int rc = sqlite3_open("test.db", &db);    
     if (rc != SQLITE_OK)
-            {
-                fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
-                sqlite3_close(db);
-            }
+    {
+        fprintf(stderr, "Cannot open database: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+    }
+
     rc = sqlite3_exec(db, sql, 0, 0, &err_msg);
     if (rc != SQLITE_OK )
-            {
-                fprintf(stderr, "SQL error: %s\n", err_msg);
-        
-                sqlite3_free(err_msg);        
-                sqlite3_close(db);
-            }
+    {
+        fprintf(stderr, "SQL error: %s\n", err_msg);
+
+        sqlite3_free(err_msg);        
+        sqlite3_close(db);
+    }
 
     sqlite3_close(db);
 
-	
-    struct clnt_adr;
     int clnt_sock;
-    socklen_t clnt_adr_sz;
     pthread_t t_id;
 
-    int recv_len;
-    static const char *message = "OK client"; 
-    int count = 0;
 
     pthread_mutex_init(&mutex, NULL);
 
@@ -330,8 +299,6 @@ int main()
     recv_buffer = (item_t *)malloc(sizeof(item_t) * (BUF_SIZE-1));
 	
     int listen_sock = -1;
-    const size_t max_socks = 100;
-    static int sock[100];
 
 	struct sockaddr_in listen_addr;
     
@@ -344,26 +311,10 @@ int main()
     listen_addr.sin_port = htons(PORT);
 
     if(bind(listen_sock, (struct sockaddr*)&listen_addr, sizeof(listen_addr)) == -1)
-    {
-        printf("bind error\n");
-    }   
+        printf("bind error\n");  
 
     if(listen(listen_sock, 1) != 0)
-    {
         printf("listen error\n");
-    }
-
-    
-
-    // thr_id = pthread_create(&thread2, NULL, thread_summation,(void *)"thread 2");
-	// if (thr_id < 0)
-    // {
-    //     perror("thread create error : ");
-    //     exit(0);
-    // }
-
-    
-
 
     while(1)
     {
@@ -376,7 +327,7 @@ int main()
         clnt_socks[clnt_cnt++] = clnt_sock;
         pthread_mutex_unlock(&mutex);
 
-        pthread_create(&t_id, NULL, handle_clnt, (void*)&clnt_sock);
+        pthread_create(&t_id, NULL, DataRead, (void*)&clnt_sock);
 
         pthread_detach(t_id);
     }
