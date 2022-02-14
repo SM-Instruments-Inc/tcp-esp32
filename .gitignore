@@ -1,4 +1,4 @@
 # manually ignored
-.projbuild
+*.projbuild
 /build
-.db
+*.db
