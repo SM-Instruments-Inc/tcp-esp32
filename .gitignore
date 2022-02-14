@@ -1,2 +1,3 @@
 # manually ignored
-.db
+Kconfig.projbuild
+/build
