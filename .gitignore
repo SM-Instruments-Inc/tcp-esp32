@@ -6,6 +6,6 @@
 # Unignore all dirs 
 !*/
 
-*.projbuild
 build/
 *.db
+*.png
